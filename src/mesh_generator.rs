@@ -10,7 +10,7 @@ use crate::{
         text_mesh_from_data, text_mesh_from_data_2d, text_mesh_from_data_indexed,
         text_mesh_from_data_indexed_2d, GlyphOutlineBuilder,
     },
-    BoundingBox, CacheType, Glyph, IndexedMeshText, MeshText, QualitySettings, TextSection,
+    BoundingBox, Glyph, IndexedMeshText, MeshText, QualitySettings,
 };
 
 type Mesh = (Vec<Vec3A>, BoundingBox);
@@ -25,32 +25,11 @@ type IndexedMesh2D = (Vec<u32>, Vec<Vec2>, BoundingBox);
 /// if you need support for multiple fonts, you will need to create
 /// multiple instances (one per font) of this generator.
 pub struct MeshGenerator {
-    /// Cached non-indexed glyphs are stored in this [HashMap].
-    ///
-    /// The key is the character itself, however because each
-    /// character can have a 2D and a 3D variant, in the 3D
-    /// variant each character is prefixed with an `_`.
-    #[allow(unused)]
-    cache: HashMap<String, Mesh>,
-
     /// The current [Face].
     font: Face<'static>,
 
-    /// Cached indexed glyphs are stored in this [HashMap].
-    ///
-    /// The key is the character itself, however because each
-    /// character can have a 2D and a 3D variant, in the 3D
-    /// variant each character is prefixed with an `_`.
-    #[allow(unused)]
-    indexed_cache: HashMap<String, IndexedMesh>,
-
     /// Quality settings for generating the text meshes.
     quality: QualitySettings,
-
-    /// Controls wether the generator will automatically
-    /// cache glyphs.
-    #[allow(unused)]
-    use_cache: bool,
 }
 
 impl MeshGenerator {
@@ -63,11 +42,8 @@ impl MeshGenerator {
         let face = Face::parse(font, 0).expect("Failed to generate font from data.");
 
         Self {
-            cache: HashMap::new(),
             font: face,
-            indexed_cache: HashMap::new(),
             quality: QualitySettings::default(),
-            use_cache: true,
         }
     }
 
@@ -81,55 +57,12 @@ impl MeshGenerator {
         let face = Face::parse(font, 0).expect("Failed to generate font from data.");
 
         Self {
-            cache: HashMap::new(),
             font: face,
-            indexed_cache: HashMap::new(),
             quality,
-            use_cache: true,
         }
     }
 
-    /// Creates a new [MeshGenerator] with custom quality settings and no caching.
-    ///
-    /// Arguments:
-    ///
-    /// * `font`: The font that will be used for rasterizing.
-    /// * `quality`: The [QualitySettings] that should be used.
-    pub fn new_without_cache(font: &'static [u8], quality: QualitySettings) -> Self {
-        let face = Face::parse(font, 0).expect("Failed to generate font from data.");
-
-        Self {
-            cache: HashMap::new(),
-            font: face,
-            indexed_cache: HashMap::new(),
-            quality,
-            use_cache: false,
-        }
-    }
-
-    /// Removes all stored glyphs from the internal cache.
-    ///
-    /// Normally it should not be necessary to do this manually unless your program
-    /// cached so many glyphs, that memory consumption becomes an issue.
-    ///
-    /// This function does nothing if the current [MeshGenerator] does not have a cache.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use meshtext::MeshGenerator;
-    ///
-    /// let font_data = include_bytes!("../assets/font/FiraMono-Regular.ttf");
-    /// let mut generator = MeshGenerator::new(font_data);
-    ///
-    /// generator.clear_cache();
-    /// ```
-    pub fn clear_cache(&mut self) {
-        if self.use_cache {
-            self.cache.clear();
-        }
-    }
-
+    /*
     /// Fills the internal cache of a [MeshGenerator] with the given characters.
     ///
     /// Arguments:
@@ -189,6 +122,7 @@ impl MeshGenerator {
 
         Ok(())
     }
+    */
 
     /// Generates the [MeshText] of a single character with a custom transformation.
     ///
@@ -210,7 +144,7 @@ impl MeshGenerator {
         flat: bool,
         transform: Option<&[f32; 16]>,
     ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        let mut mesh = self.load_from_cache(glyph, flat)?;
+        let mut mesh = self.make_mesh(glyph, flat)?;
 
         if let Some(value) = transform {
             let transform = Mat4::from_cols_array(value);
@@ -241,7 +175,7 @@ impl MeshGenerator {
         glyph: char,
         transform: Option<&[f32; 9]>,
     ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        let mesh = self.load_from_cache(glyph, true)?;
+        let mesh = self.make_mesh(glyph, true)?;
         let mut mesh = mesh_to_flat_2d(mesh);
 
         if let Some(value) = transform {
@@ -278,7 +212,7 @@ impl MeshGenerator {
         flat: bool,
         transform: Option<&[f32; 16]>,
     ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        let mut mesh = self.load_from_cache_indexed(glyph, flat)?;
+        let mut mesh = self.make_indexed_mesh(glyph, flat)?;
 
         if let Some(value) = transform {
             let transform = Mat4::from_cols_array(value);
@@ -312,7 +246,7 @@ impl MeshGenerator {
         glyph: char,
         transform: Option<&[f32; 9]>,
     ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        let mesh = self.load_from_cache_indexed(glyph, true)?;
+        let mesh = self.make_indexed_mesh(glyph, true)?;
         let mut mesh = mesh_to_indexed_flat_2d(mesh);
 
         if let Some(value) = transform {
@@ -347,7 +281,7 @@ impl MeshGenerator {
         flat: bool,
         transform: &Mat4,
     ) -> Result<Mesh, Box<dyn MeshTextError>> {
-        let mut mesh = self.load_from_cache(glyph, flat)?;
+        let mut mesh = self.make_mesh(glyph, flat)?;
 
         for v in mesh.0.iter_mut() {
             *v = transform.transform_point3a(*v);
@@ -374,7 +308,7 @@ impl MeshGenerator {
         glyph: char,
         transform: &Mat3,
     ) -> Result<Mesh2D, Box<dyn MeshTextError>> {
-        let mesh = self.load_from_cache(glyph, true)?;
+        let mesh = self.make_mesh(glyph, true)?;
         let mut mesh = mesh_to_flat_2d(mesh);
 
         for v in mesh.0.iter_mut() {
@@ -407,7 +341,7 @@ impl MeshGenerator {
         flat: bool,
         transform: &Mat4,
     ) -> Result<IndexedMesh, Box<dyn MeshTextError>> {
-        let mut mesh = self.load_from_cache_indexed(glyph, flat)?;
+        let mut mesh = self.make_indexed_mesh(glyph, flat)?;
 
         for v in mesh.1.iter_mut() {
             *v = transform.transform_point3a(*v);
@@ -436,7 +370,7 @@ impl MeshGenerator {
         glyph: char,
         transform: &Mat3,
     ) -> Result<IndexedMesh2D, Box<dyn MeshTextError>> {
-        let mesh = self.load_from_cache_indexed(glyph, true)?;
+        let mesh = self.make_indexed_mesh(glyph, true)?;
         let mut mesh = mesh_to_indexed_flat_2d(mesh);
 
         for v in mesh.1.iter_mut() {
@@ -445,381 +379,6 @@ impl MeshGenerator {
         mesh.2.transform_2d(transform);
 
         Ok(mesh)
-    }
-
-    /// Generates the [MeshText] of a given text section.
-    ///
-    /// Arguments:
-    ///
-    /// * `text`: The text that should be converted to a mesh.
-    /// * `flat`: Set this to `true` for 2D meshes, or to `false` in order
-    /// to generate a mesh with a depth of `1.0` units.
-    /// * `transform`: The optional 4x4 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired [MeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_text_section(
-        &mut self,
-        text: &str,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        let base_transform = match transform {
-            Some(value) => Mat4::from_cols_array(value),
-            None => Mat4::IDENTITY,
-        };
-
-        let mut mesh = (Vec::new(), BoundingBox::empty());
-        let mut overall_advance = 0f32;
-
-        let mut chars_iter = text.chars();
-
-        // The first char will be handled differently if present.
-        if let Some(first_glyph) = chars_iter.next() {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(first_glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat4::from_translation(Vec3::new(overall_advance, 0f32, 0f32));
-            let mut glyph_mesh =
-                self.generate_glyph_with_glam_transform(first_glyph, flat, &transform)?;
-
-            // Add vertices and replace bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh = (mesh.0, glyph_mesh.1);
-
-            overall_advance += x_advance;
-        }
-
-        for glyph in chars_iter {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat4::from_translation(Vec3::new(overall_advance, 0f32, 0f32));
-            let mut glyph_mesh =
-                self.generate_glyph_with_glam_transform(glyph, flat, &transform)?;
-
-            // Add vertices and adjust bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh = (mesh.0, mesh.1.combine(&glyph_mesh.1));
-
-            overall_advance += x_advance;
-        }
-
-        Ok(text_mesh_from_data(mesh))
-    }
-
-    /// Generates two-dimensional [MeshText] for a given text section.
-    ///
-    /// Arguments:
-    ///
-    /// * `text`: The text that should be converted to a mesh.
-    /// * `transform`: The optional 3x3 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired [MeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_text_section_2d(
-        &mut self,
-        text: &str,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        let base_transform = match transform {
-            Some(value) => Mat3::from_cols_array(value),
-            None => Mat3::IDENTITY,
-        };
-
-        let mut mesh = (Vec::new(), BoundingBox::empty());
-        let mut overall_advance = 0f32;
-
-        let mut chars_iter = text.chars();
-
-        // The first char will be handled differently if present.
-        if let Some(first_glyph) = chars_iter.next() {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(first_glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat3::from_translation(Vec2::new(overall_advance, 0f32));
-            let mut glyph_mesh =
-                self.generate_glyph_with_glam_transform_2d(first_glyph, &transform)?;
-
-            // Add vertices and replace bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh = (mesh.0, glyph_mesh.1);
-
-            overall_advance += x_advance;
-        }
-
-        for glyph in chars_iter {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat3::from_translation(Vec2::new(overall_advance, 0f32));
-            let mut glyph_mesh = self.generate_glyph_with_glam_transform_2d(glyph, &transform)?;
-
-            // Add vertices and adjust bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh = (mesh.0, mesh.1.combine(&glyph_mesh.1));
-
-            overall_advance += x_advance;
-        }
-
-        Ok(text_mesh_from_data_2d(mesh))
-    }
-
-    /// Generates the [MeshText] of a given text section.
-    ///
-    /// This function handles indexed meshes.
-    ///
-    /// Arguments:
-    ///
-    /// * `text`: The text that should be converted to a mesh.
-    /// * `flat`: Set this to `true` for 2D meshes, or to `false` in order
-    /// to generate a mesh with a depth of `1.0` units.
-    /// * `transform`: The optional 4x4 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired [MeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_text_section_indexed(
-        &mut self,
-        text: &str,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        let base_transform = match transform {
-            Some(value) => Mat4::from_cols_array(value),
-            None => Mat4::IDENTITY,
-        };
-
-        let mut mesh = (Vec::new(), Vec::new(), BoundingBox::empty());
-        let mut overall_advance = 0f32;
-        let mut index_offset = 0;
-
-        let mut chars_iter = text.chars();
-
-        // The first char will be handled differently if present.
-        if let Some(first_glyph) = chars_iter.next() {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(first_glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat4::from_translation(Vec3::new(overall_advance, 0f32, 0f32));
-            let mut glyph_mesh =
-                self.generate_glyph_with_glam_transform_indexed(first_glyph, flat, &transform)?;
-
-            // Update index offset (note that glyph meshes can be empty).
-            if let Some(max) = glyph_mesh.0.iter().max() {
-                index_offset = *max + 1;
-            }
-
-            // Add vertices and replace bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh.1.append(&mut glyph_mesh.1);
-            mesh = (mesh.0, mesh.1, glyph_mesh.2);
-
-            overall_advance += x_advance;
-        }
-
-        for glyph in chars_iter {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat4::from_translation(Vec3::new(overall_advance, 0f32, 0f32));
-            let mut glyph_mesh =
-                self.generate_glyph_with_glam_transform_indexed(glyph, flat, &transform)?;
-
-            // Offset indices.
-            for i in glyph_mesh.0.iter_mut() {
-                *i += index_offset;
-            }
-
-            // Update index offset (note that glyph meshes can be empty).
-            if let Some(max) = glyph_mesh.0.iter().max() {
-                index_offset = *max + 1;
-            }
-
-            // Add vertices and indices and adjust bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh.1.append(&mut glyph_mesh.1);
-            mesh = (mesh.0, mesh.1, mesh.2.combine(&glyph_mesh.2));
-
-            overall_advance += x_advance;
-        }
-
-        Ok(text_mesh_from_data_indexed(mesh))
-    }
-
-    /// Generates two-dimensional [MeshText] for a given text section.
-    ///
-    /// This function handles indexed meshes.
-    ///
-    /// Arguments:
-    ///
-    /// * `text`: The text that should be converted to a mesh.
-    /// * `transform`: The optional 3x3 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired [MeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_text_section_indexed_2d(
-        &mut self,
-        text: &str,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        let base_transform = match transform {
-            Some(value) => Mat3::from_cols_array(value),
-            None => Mat3::IDENTITY,
-        };
-
-        let mut mesh = (Vec::new(), Vec::new(), BoundingBox::empty());
-        let mut overall_advance = 0f32;
-        let mut index_offset = 0;
-
-        let mut chars_iter = text.chars();
-
-        // The first char will be handled differently if present.
-        if let Some(first_glyph) = chars_iter.next() {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(first_glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat3::from_translation(Vec2::new(overall_advance, 0f32));
-            let mut glyph_mesh =
-                self.generate_glyph_with_glam_transform_indexed_2d(first_glyph, &transform)?;
-
-            // Update index offset (note that glyph meshes can be empty).
-            if let Some(max) = glyph_mesh.0.iter().max() {
-                index_offset = *max + 1;
-            }
-
-            // Add vertices and replace bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh.1.append(&mut glyph_mesh.1);
-            mesh = (mesh.0, mesh.1, glyph_mesh.2);
-
-            overall_advance += x_advance;
-        }
-
-        for glyph in chars_iter {
-            let x_advance = self
-                .font
-                .glyph_hor_advance(self.glyph_id_of_char(glyph))
-                .unwrap_or(0) as f32
-                / self.font.height() as f32;
-
-            let transform =
-                base_transform * Mat3::from_translation(Vec2::new(overall_advance, 0f32));
-            let mut glyph_mesh =
-                self.generate_glyph_with_glam_transform_indexed_2d(glyph, &transform)?;
-
-            // Offset indices.
-            for i in glyph_mesh.0.iter_mut() {
-                *i += index_offset;
-            }
-
-            // Update index offset (note that glyph meshes can be empty).
-            if let Some(max) = glyph_mesh.0.iter().max() {
-                index_offset = *max + 1;
-            }
-
-            // Add vertices and indices and adjust bbox.
-            mesh.0.append(&mut glyph_mesh.0);
-            mesh.1.append(&mut glyph_mesh.1);
-            mesh = (mesh.0, mesh.1, mesh.2.combine(&glyph_mesh.2));
-
-            overall_advance += x_advance;
-        }
-
-        Ok(text_mesh_from_data_indexed_2d(mesh))
-    }
-
-    /// Loads the given glyph from the cache or adds it.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be loaded.
-    /// * `flat`: Wether the character should be laid out in a 2D mesh.
-    ///
-    /// Returns:
-    ///
-    /// A [Result] containing the [Mesh] if successful, otherwise an [MeshTextError].
-    fn load_from_cache(&mut self, glyph: char, flat: bool) -> Result<Mesh, Box<dyn MeshTextError>> {
-        if flat {
-            match self.cache.get(&glyph.to_string()) {
-                Some(glyph_mesh) => Ok(glyph_mesh.to_owned()),
-                None => self.insert_into_cache(glyph, flat),
-            }
-        } else {
-            match self.cache.get(&format!("_{}", glyph)) {
-                Some(glyph_mesh) => Ok(glyph_mesh.to_owned()),
-                None => self.insert_into_cache(glyph, flat),
-            }
-        }
-    }
-
-    /// Loads the given glyph from the cache or adds it.
-    ///
-    /// This function deals with indexed meshes.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be loaded.
-    /// * `flat`: Wether the character should be laid out in a 2D mesh.
-    ///
-    /// Returns:
-    ///
-    /// A [Result] containing the [IndexedMesh] if successful, otherwise an [MeshTextError].
-    fn load_from_cache_indexed(
-        &mut self,
-        glyph: char,
-        flat: bool,
-    ) -> Result<IndexedMesh, Box<dyn MeshTextError>> {
-        if flat {
-            match self.indexed_cache.get(&glyph.to_string()) {
-                Some(glyph_mesh) => Ok(glyph_mesh.to_owned()),
-                None => self.insert_into_cache_indexed(glyph, flat),
-            }
-        } else {
-            match self.indexed_cache.get(&format!("_{}", glyph)) {
-                Some(glyph_mesh) => Ok(glyph_mesh.to_owned()),
-                None => self.insert_into_cache_indexed(glyph, flat),
-            }
-        }
     }
 
     /// Generates a new [Mesh] from the loaded font and the given `glyph`
@@ -833,7 +392,7 @@ impl MeshGenerator {
     /// Returns:
     ///
     /// A [Result] containing the [Mesh] if successful, otherwise an [MeshTextError].
-    fn insert_into_cache(
+    fn make_mesh(
         &mut self,
         glyph: char,
         flat: bool,
@@ -867,9 +426,8 @@ impl MeshGenerator {
         };
 
         // Add mesh to cache.
-        let bbox;
-        if flat {
-            bbox = BoundingBox {
+        let bbox = if flat {
+            BoundingBox {
                 max: Vec3A::new(
                     rect.x_max as f32 / font_height,
                     rect.y_max as f32 / font_height,
@@ -880,10 +438,9 @@ impl MeshGenerator {
                     rect.y_min as f32 / font_height,
                     0f32,
                 ),
-            };
-            self.cache.insert(glyph.to_string(), (mesh.clone(), bbox));
+            }
         } else {
-            bbox = BoundingBox {
+            BoundingBox {
                 max: Vec3A::new(
                     rect.x_max as f32 / font_height,
                     rect.y_max as f32 / font_height,
@@ -894,10 +451,8 @@ impl MeshGenerator {
                     rect.y_min as f32 / font_height,
                     depth.1,
                 ),
-            };
-            self.cache
-                .insert(format!("_{}", glyph), (mesh.clone(), bbox));
-        }
+            }
+        };
 
         Ok((mesh, bbox))
     }
@@ -913,7 +468,7 @@ impl MeshGenerator {
     /// Returns:
     ///
     /// A [Result] containing the [IndexedMesh] if successful, otherwise an [MeshTextError].
-    fn insert_into_cache_indexed(
+    fn make_indexed_mesh(
         &mut self,
         glyph: char,
         flat: bool,
@@ -948,9 +503,8 @@ impl MeshGenerator {
         };
 
         // Add mesh to cache.
-        let bbox;
-        if flat {
-            bbox = BoundingBox {
+        let bbox = if flat {
+            BoundingBox {
                 max: Vec3A::new(
                     rect.x_max as f32 / font_height,
                     rect.y_max as f32 / font_height,
@@ -961,11 +515,9 @@ impl MeshGenerator {
                     rect.y_min as f32 / font_height,
                     0f32,
                 ),
-            };
-            self.indexed_cache
-                .insert(glyph.to_string(), (indices.clone(), vertices.clone(), bbox));
+            }
         } else {
-            bbox = BoundingBox {
+            BoundingBox {
                 max: Vec3A::new(
                     rect.x_max as f32 / font_height,
                     rect.y_max as f32 / font_height,
@@ -976,12 +528,8 @@ impl MeshGenerator {
                     rect.y_min as f32 / font_height,
                     depth.1,
                 ),
-            };
-            self.indexed_cache.insert(
-                format!("_{}", glyph),
-                (indices.clone(), vertices.clone(), bbox),
-            );
-        }
+            }
+        };
 
         Ok((indices, vertices, bbox))
     }
@@ -999,44 +547,6 @@ impl MeshGenerator {
         self.font
             .glyph_index(glyph)
             .unwrap_or(ttf_parser::GlyphId(0))
-    }
-}
-
-impl TextSection<MeshText> for MeshGenerator {
-    fn generate_section(
-        &mut self,
-        text: &str,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        self.generate_text_section(text, flat, transform)
-    }
-
-    fn generate_section_2d(
-        &mut self,
-        text: &str,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        self.generate_text_section_2d(text, transform)
-    }
-}
-
-impl TextSection<IndexedMeshText> for MeshGenerator {
-    fn generate_section(
-        &mut self,
-        text: &str,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        self.generate_text_section_indexed(text, flat, transform)
-    }
-
-    fn generate_section_2d(
-        &mut self,
-        text: &str,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        self.generate_text_section_indexed_2d(text, transform)
     }
 }
 

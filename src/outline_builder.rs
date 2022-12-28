@@ -38,23 +38,21 @@ impl OutlineBuilder {
         Outline{contours: self.contours, points: self.points}
     }
 
-    fn add_point(&mut self, (x, y): (f32, f32)) {
+    fn add_segment(&mut self, (x, y): (f32, f32)) {
         self.current_point = (x, y);
-
-        // Normalize the coordinates of each glyph into the range `0..=1`.
+        self.current_contour.push(self.points.len());
         self.points.push((x / self.font_height, y / self.font_height));
     }
 }
 
 impl ttf_parser::OutlineBuilder for OutlineBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
-        self.current_contour = vec![self.points.len()];
-        self.add_point((x, y));
+        // TODO detect unclosed contour here
+        self.add_segment((x, y));
     }
 
     fn line_to(&mut self, x: f32, y: f32) {
-        self.current_contour.push(self.points.len());
-        self.add_point((x, y));
+        self.add_segment((x, y));
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32) {
@@ -79,6 +77,7 @@ impl ttf_parser::OutlineBuilder for OutlineBuilder {
         // remove redundant end point
         self.points.pop();
         self.current_contour.pop();
+
         self.current_contour.push(self.current_contour[0]);
         self.contours.push(self.current_contour.split_off(0));
     }

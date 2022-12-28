@@ -2,7 +2,6 @@
 name = "meshtext"
 version = "0.2.1"
 edition = "2021"
-#exclude = ["benches/*"]
 description = "Generate vertex-vertex meshes from text."
 readme = "README.md"
 repository = "https://github.com/rkanati/meshtext"
@@ -15,16 +14,3 @@ cdt = "0.1"
 glam = "0.22"
 ttf-parser = "0.18"
 
-[dev-dependencies]
-#criterion = { version = "0.3", features = ["html_reports"] }
-#gltf-json = "1"
-#gltf = "1"
-#plotters = "0.3"
-#pollster = "0.2"
-#wgpu = "0.14"
-#winit = "0.27"
-
-#[[bench]]
-#name = "bench_main"
-#path = "benches/bench_main.rs"
-#harness = false

@@ -2,29 +2,29 @@
 name = "meshtext"
 version = "0.2.1"
 edition = "2021"
-exclude = ["benches/*"]
+#exclude = ["benches/*"]
 description = "Generate vertex-vertex meshes from text."
 readme = "README.md"
-repository = "https://github.com/FrankenApps/meshtext"
+repository = "https://github.com/rkanati/meshtext"
 license = "MIT OR Apache-2.0"
 keywords = ["graphics", "gamedev", "delauny", "render", "triangulation"]
 categories = ["graphics", "game-development", "rendering"]
 
 [dependencies]
-cdt = "0.1.0"
+cdt = "0.1"
 glam = "0.22"
-ttf-parser = "0.17"
+ttf-parser = "0.18"
 
 [dev-dependencies]
-criterion = { version = "0.3", features = ["html_reports"] }
-gltf-json = "1"
-gltf = "1"
-plotters = "0.3"
-pollster = "0.2"
-wgpu = "0.14"
-winit = "0.27"
+#criterion = { version = "0.3", features = ["html_reports"] }
+#gltf-json = "1"
+#gltf = "1"
+#plotters = "0.3"
+#pollster = "0.2"
+#wgpu = "0.14"
+#winit = "0.27"
 
-[[bench]]
-name = "bench_main"
-path = "benches/bench_main.rs"
-harness = false
+#[[bench]]
+#name = "bench_main"
+#path = "benches/bench_main.rs"
+#harness = false

@@ -1,17 +1,8 @@
 #![doc(html_favicon_url = "https://raw.githubusercontent.com/FrankenApps/meshtext/master/logo.png")]
 #![doc(html_logo_url = "https://raw.githubusercontent.com/FrankenApps/meshtext/master/logo.png")]
-//! Generate 2D or 3D triangle meshes from text.
+//! Generate 2d/3d triangle meshes for font glyphs.
 //!
-//! Generate vertices or indices and vertices for a
-//! [vertex-vertex mesh](https://en.wikipedia.org/wiki/Polygon_mesh#Vertex-vertex_meshes).
-//!
-//! - Supports [TrueType](https://docs.microsoft.com/en-us/typography/truetype/),
-//! [OpenType](https://docs.microsoft.com/en-us/typography/opentype/spec/)
-//! and [AAT](https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6AATIntro.html)
-//! fonts
-//! - Handles caching of characters that were already triangulated
-//! - Allows transforming text sections
-//! - Fully customizable to easily integrate in your rendering pipeline
+//! Supports any outline font supported by ttf_parser.
 
 mod outline_builder;
 use outline_builder::{Outline, OutlineBuilder};
@@ -50,7 +41,7 @@ pub struct Mesh {
     pub indices: Vec<u32>,
 
     /// The vertices of this mesh.
-    pub vertices: Vec<f32>,
+    pub vertices: Vec<[f32; 3]>,
 }
 
 /// Controls the quality of generated glyphs.
@@ -167,7 +158,7 @@ impl<'face> MeshGenerator<'face> {
         };
 
         let vertices = vertices.into_iter()
-            .flat_map(Into::<[f32; 3]>::into)
+            .map(Into::<[f32; 3]>::into)
             .collect();
         Ok(Mesh {bbox, indices, vertices})
     }

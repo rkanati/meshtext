@@ -146,10 +146,10 @@ impl<'face> MeshGenerator<'face> {
         let (vertices, indices) = tesselate(builder.into_outline(), flat)?;
 
         // Compute bounding box.
-        let depth = if flat {(0., 0.)} else {(0.5, -0.5)};
+        let (zmin, zmax) = if flat {(0., 0.)} else {(-0.5, 0.5)};
         let bbox = BoundingBox::new(
-            [bbox.x_min as f32 / font_height, bbox.y_min as f32 / font_height, depth.1],
-            [bbox.x_max as f32 / font_height, bbox.y_max as f32 / font_height, depth.0],
+            [bbox.x_min as f32 / font_height, bbox.y_min as f32 / font_height, zmin],
+            [bbox.x_max as f32 / font_height, bbox.y_max as f32 / font_height, zmax],
         );
 
         let vertices = vertices.into_iter()

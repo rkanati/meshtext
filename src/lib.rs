@@ -7,8 +7,28 @@
 mod outline_builder;
 use outline_builder::{Outline, OutlineBuilder};
 
-mod bounding_box;
-pub use bounding_box::BoundingBox;
+/// A bounding box for a mesh. If the mesh is flat, the z-coordinates will be zero.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BoundingBox {
+    /// The coordinates of the minimum point.
+    pub mins: [f32; 3],
+    /// The coordinates of the maximum point.
+    pub maxs: [f32; 3],
+}
+
+impl BoundingBox {
+    /// Creates a new [BoundingBox].
+    ///
+    /// Arguments:
+    /// * `mins`: The minimum vertex of this bounding box.
+    /// * `maxs`: The maximum vertex of this bounding box.
+    ///
+    /// Returns:
+    /// The new [BoundingBox].
+    pub fn new(mins: [f32; 3], maxs: [f32; 3]) -> Self {
+        Self{mins, maxs}
+    }
+}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -72,8 +92,6 @@ impl Default for QualitySettings {
     }
 }
 
-use glam::Vec3A;
-
 pub type FaceRef<'f> = &'f ttf_parser::Face<'f>;
 pub use ttf_parser::GlyphId;
 
@@ -129,18 +147,10 @@ impl<'face> MeshGenerator<'face> {
 
         // Compute bounding box.
         let depth = if flat {(0., 0.)} else {(0.5, -0.5)};
-        let bbox = BoundingBox {
-            max: Vec3A::new(
-                bbox.x_max as f32 / font_height,
-                bbox.y_max as f32 / font_height,
-                depth.0,
-            ),
-            min: Vec3A::new(
-                bbox.x_min as f32 / font_height,
-                bbox.y_min as f32 / font_height,
-                depth.1,
-            ),
-        };
+        let bbox = BoundingBox::new(
+            [bbox.x_min as f32 / font_height, bbox.y_min as f32 / font_height, depth.1],
+            [bbox.x_max as f32 / font_height, bbox.y_max as f32 / font_height, depth.0],
+        );
 
         let vertices = vertices.into_iter()
             .map(Into::<[f32; 3]>::into)
@@ -158,7 +168,7 @@ impl<'face> MeshGenerator<'face> {
 ///
 /// Returns:
 /// A [Result] containing the generated mesh data or an [Error] upon failure.
-fn tesselate(outline: Outline, flat: bool) -> Result<(Vec<Vec3A>, Vec<u32>)> {
+fn tesselate(outline: Outline, flat: bool) -> Result<(Vec<[f32; 3]>, Vec<u32>)> {
     let triangles = {
         // TODO: Implement a custom triangulation algorithm to get rid of these conversions.
         let points = outline.points.iter().copied()
@@ -174,7 +184,7 @@ fn tesselate(outline: Outline, flat: bool) -> Result<(Vec<Vec3A>, Vec<u32>)> {
 
     // front face
     let mut vertices = outline.points.iter().copied()
-        .map(|(x, y)| Vec3A::new(x, y, z))
+        .map(|(x, y)| [x, y, z])
         .collect();
 
     let mut indices = triangles.iter().copied()
@@ -187,7 +197,7 @@ fn tesselate(outline: Outline, flat: bool) -> Result<(Vec<Vec3A>, Vec<u32>)> {
     let back = vertices.len();
     vertices.extend(
         outline.points.iter().copied()
-            .map(|(x, y)| Vec3A::new(x, y, -z))
+            .map(|(x, y)| [x, y, -z])
     );
 
     indices.extend(

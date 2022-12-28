@@ -11,6 +11,5 @@ categories = ["graphics", "game-development", "rendering"]
 
 [dependencies]
 cdt = "0.1"
-glam = "0.22"
 ttf-parser = "0.18"
 

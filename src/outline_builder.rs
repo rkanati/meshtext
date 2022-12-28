@@ -1,21 +1,28 @@
-use ttf_parser::OutlineBuilder;
-
-use crate::{GlyphOutline, QualitySettings};
+use crate::QualitySettings;
 
 type Point = (f32, f32);
 
-pub(super) struct GlyphOutlineBuilder {
-    contours: Vec<Vec<u32>>,
-    current_point: (f32, f32),
-    font_height: f32,
-    index: u32,
-    points: Vec<Point>,
-    quality: QualitySettings,
-    start_index: u32,
+/// The internal representation of a rasterized glyph outline.
+pub(crate) struct Outline {
+    /// The indices that form closed contours of points.
+    pub contours: Vec<Vec<usize>>,
+
+    /// A point cloud that contains one or more contours.
+    pub points: Vec<Point>,
 }
 
-impl GlyphOutlineBuilder {
-    pub(super) fn new(font_height: f32, quality: QualitySettings) -> Self {
+pub(crate) struct OutlineBuilder {
+    contours: Vec<Vec<usize>>,
+    current_point: Point,
+    font_height: f32,
+    index: usize,
+    points: Vec<Point>,
+    quality: QualitySettings,
+    start_index: usize,
+}
+
+impl OutlineBuilder {
+    pub(crate) fn new(font_height: f32, quality: QualitySettings) -> Self {
         Self {
             contours: Vec::new(),
             current_point: (0f32, 0f32),
@@ -27,10 +34,10 @@ impl GlyphOutlineBuilder {
         }
     }
 
-    pub(super) fn get_glyph_outline(&mut self) -> GlyphOutline {
-        GlyphOutline {
-            contours: self.contours.clone(),
-            points: self.points.clone(),
+    pub(crate) fn into_outline(self) -> Outline {
+        Outline {
+            contours: self.contours,
+            points: self.points,
         }
     }
 
@@ -44,7 +51,7 @@ impl GlyphOutlineBuilder {
     }
 }
 
-impl OutlineBuilder for GlyphOutlineBuilder {
+impl ttf_parser::OutlineBuilder for OutlineBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
         self.start_index = self.index;
         self.contours.push(vec![self.start_index]);

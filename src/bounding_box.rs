@@ -1,7 +1,7 @@
 use glam::Vec3A;
 
 /// A bounding box for a mesh. If the mesh is flat, the z-coordinates will be zero.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoundingBox {
     /// The coordinates of the minimum point.
     pub min: Vec3A,
@@ -22,18 +22,6 @@ impl BoundingBox {
     /// The new [BoundingBox].
     pub fn new(min: Vec3A, max: Vec3A) -> Self {
         Self{min, max}
-    }
-
-    /// Creates a new empty [BoundingBox].
-    ///
-    /// Returns:
-    ///
-    /// The empty [BoundingBox].
-    pub(crate) fn empty() -> Self {
-        Self {
-            max: Vec3A::ZERO,
-            min: Vec3A::ZERO,
-        }
     }
 
     /// Calculates the center of this [BoundingBox].

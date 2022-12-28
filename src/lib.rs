@@ -13,6 +13,14 @@
 //! - Allows transforming text sections
 //! - Fully customizable to easily integrate in your rendering pipeline
 
+mod outline_builder;
+use outline_builder::{Outline, OutlineBuilder};
+
+mod bounding_box;
+pub use bounding_box::BoundingBox;
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 /// An error that can occur while triangulating the outline of a font.
 #[derive(Debug)]
 pub enum Error {
@@ -30,29 +38,11 @@ impl std::fmt::Display for Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-mod mesh_generator;
-pub use mesh_generator::MeshGenerator;
-
-mod bounding_box;
-pub use bounding_box::BoundingBox;
-
-type Point = (f32, f32);
-
-/// The internal representation of a rasterized glyph outline.
-pub(crate) struct GlyphOutline {
-    /// The indices that form closed contours of points.
-    pub contours: Vec<Vec<u32>>,
-
-    /// A point cloud that contains one or more contours.
-    pub points: Vec<Point>,
-}
-
 /// Holds the generated mesh data for the given glyph.
 ///
 /// The triangles use indexed vertices.
-pub struct GlyphMesh {
+#[derive(Default)]
+pub struct Mesh {
     /// The bounding box of this mesh.
     pub bbox: BoundingBox,
 
@@ -95,5 +85,151 @@ impl Default for QualitySettings {
             cubic_interpolation_steps: 3,
         }
     }
+}
+
+use glam::Vec3A;
+
+pub type FaceRef<'f> = &'f ttf_parser::Face<'f>;
+pub use ttf_parser::GlyphId;
+
+/// A [MeshGenerator] handles rasterizing individual glyphs.
+///
+/// Each [MeshGenerator] will handle exactly one font. This means
+/// if you need support for multiple fonts, you will need to create
+/// multiple instances (one per font) of this generator.
+pub struct MeshGenerator<'face> {
+    /// The current [Face].
+    face: FaceRef<'face>,
+
+    /// Quality settings for generating the text meshes.
+    quality: QualitySettings,
+}
+
+impl<'face> MeshGenerator<'face> {
+    /// Creates a new [MeshGenerator].
+    ///
+    /// Arguments:
+    ///
+    /// * `font`: The font that will be used for rasterizing.
+    pub fn new(face: FaceRef<'face>) -> Self {
+        Self{face, quality: QualitySettings::default()}
+    }
+
+    /// Creates a new [MeshGenerator] with custom quality settings.
+    ///
+    /// Arguments:
+    ///
+    /// * `font`: The font that will be used for rasterizing.
+    /// * `quality`: The [QualitySettings] that should be used.
+    pub fn new_with_quality(face: FaceRef<'face>, quality: QualitySettings) -> Self {
+        Self{face, quality}
+    }
+
+    /// Get the face used by this [MeshGenerator].
+    pub fn face(&self) -> FaceRef<'face> {
+        self.face
+    }
+
+    /// Generates a new [Mesh] from the loaded font and the given `glyph`
+    /// and inserts it into the internal `cache`.
+    ///
+    /// Arguments:
+    ///
+    /// * `glyph`: The glyph to be meshed.
+    /// * `flat`: Wether the character should be laid out in a 2D mesh.
+    ///
+    /// Returns:
+    ///
+    /// A [Result] containing the [Mesh] if successful, otherwise an [Error].
+    pub fn generate_mesh(&self, glyph: GlyphId, flat: bool) -> Result<Mesh> {
+        let font_height = self.face.height() as f32;
+        let mut builder = OutlineBuilder::new(font_height, self.quality);
+
+        let Some(bbox) = self.face.outline_glyph(glyph, &mut builder) else {
+            return Ok(Mesh::default());
+        };
+
+        let (vertices, indices) = tesselate(builder.into_outline(), flat)?;
+
+        // Compute bounding box.
+        let depth = if flat {(0., 0.)} else {(0.5, -0.5)};
+        let bbox = BoundingBox {
+            max: Vec3A::new(
+                bbox.x_max as f32 / font_height,
+                bbox.y_max as f32 / font_height,
+                depth.0,
+            ),
+            min: Vec3A::new(
+                bbox.x_min as f32 / font_height,
+                bbox.y_min as f32 / font_height,
+                depth.1,
+            ),
+        };
+
+        let vertices = vertices.into_iter()
+            .flat_map(Into::<[f32; 3]>::into)
+            .collect();
+        Ok(Mesh {bbox, indices, vertices})
+    }
+}
+
+/// Generates an indexed triangle mesh from a discrete [Outline].
+///
+/// Arguments:
+///
+/// * `outline`: The outline of the desired glyph.
+/// * `flat`: Generates a two dimensional mesh if `true`, otherwise
+/// a three dimensional mesh with depth `1.0` units is generated.
+///
+/// Returns:
+///
+/// A [Result] containing the generated mesh data or an [MeshTextError] if
+/// anything went wrong in the process.
+fn tesselate(outline: Outline, flat: bool) -> Result<(Vec<Vec3A>, Vec<u32>)> {
+    let triangles = {
+        // TODO: Implement a custom triangulation algorithm to get rid of these conversions.
+        let points = outline.points.iter().copied()
+            .map(|(x, y)| (x as f64, y as f64))
+            .collect::<Vec<_>>();
+
+        // Triangulate the contours.
+        cdt::triangulate_contours(&points[..], &outline.contours[..])
+            .map_err(|e| Error::Triangulation(e))?
+    };
+
+    let z = if flat {0.0} else {0.5};
+
+    // front face
+    let mut vertices = outline.points.iter().copied()
+        .map(|(x, y)| Vec3A::new(x, y, z))
+        .collect();
+
+    let mut indices = triangles.iter().copied()
+        .flat_map(|(a, b, c)| [a, b, c].map(|i| i as u32))
+        .collect();
+
+    if flat {return Ok((vertices, indices));}
+
+    // back face
+    let back = vertices.len();
+    vertices.extend(
+        outline.points.iter().copied()
+            .map(|(x, y)| Vec3A::new(x, y, -z))
+    );
+
+    indices.extend(
+        triangles.iter().copied()
+            .flat_map(|(a, b, c)| [c, b, a].map(|i| (i + back) as u32))
+    );
+
+    // sides
+    indices.extend(
+        outline.contours.iter()
+            .flat_map(|c| std::iter::zip(&c[0..], &c[1..]))
+            .flat_map(|(&i, &j)| [i, j, back + j, back + i, i, back + j])
+            .map(|i| i as u32)
+    );
+
+    Ok((vertices, indices))
 }
 

@@ -4,7 +4,7 @@ use crate::{GlyphOutline, QualitySettings};
 
 type Point = (f32, f32);
 
-pub(crate) struct GlyphOutlineBuilder {
+pub(super) struct GlyphOutlineBuilder {
     contours: Vec<Vec<u32>>,
     current_point: (f32, f32),
     font_height: f32,
@@ -15,7 +15,7 @@ pub(crate) struct GlyphOutlineBuilder {
 }
 
 impl GlyphOutlineBuilder {
-    pub(crate) fn new(font_height: f32, quality: QualitySettings) -> Self {
+    pub(super) fn new(font_height: f32, quality: QualitySettings) -> Self {
         Self {
             contours: Vec::new(),
             current_point: (0f32, 0f32),
@@ -27,7 +27,7 @@ impl GlyphOutlineBuilder {
         }
     }
 
-    pub(crate) fn get_glyph_outline(&mut self) -> GlyphOutline {
+    pub(super) fn get_glyph_outline(&mut self) -> GlyphOutline {
         GlyphOutline {
             contours: self.contours.clone(),
             points: self.points.clone(),
@@ -151,3 +151,4 @@ fn point_on_cubic(p0: &Point, p1: &Point, p2: &Point, p3: &Point, t: f32) -> Poi
     let b = point_on_quad(p1, p2, p3, t);
     point_on_line(&a, &b, t)
 }
+

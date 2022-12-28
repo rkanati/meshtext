@@ -127,29 +127,3 @@ impl Default for QualitySettings {
     }
 }
 
-mod traits {
-    mod glyph;
-    pub use glyph::*;
-}
-pub use traits::*;
-
-pub(crate) mod util {
-    mod glam_conversions;
-    pub(crate) use glam_conversions::*;
-
-    mod mesh_to_flat_2d;
-    pub(crate) use mesh_to_flat_2d::*;
-
-    mod outline_builder;
-    pub(crate) use outline_builder::GlyphOutlineBuilder;
-
-    mod raster_to_mesh;
-    pub(crate) use raster_to_mesh::*;
-
-    mod text_mesh;
-    pub(crate) use text_mesh::*;
-
-    mod triangulation;
-    pub(crate) use triangulation::*;
-}
-

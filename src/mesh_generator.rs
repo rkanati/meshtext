@@ -1,23 +1,14 @@
-use std::collections::HashMap;
+mod outline_builder;
 
-use glam::{Mat3, Mat4, Vec2, Vec3, Vec3A};
-use ttf_parser::{Face, GlyphId};
-
-use crate::{
-    error::MeshTextError,
-    util::{
-        mesh_to_flat_2d, mesh_to_indexed_flat_2d, raster_to_mesh, raster_to_mesh_indexed,
-        text_mesh_from_data, text_mesh_from_data_2d, text_mesh_from_data_indexed,
-        text_mesh_from_data_indexed_2d, GlyphOutlineBuilder,
+use {
+    crate::{
+        error::{MeshTextError, GlyphTriangulationError},
+        BoundingBox, IndexedMeshText, QualitySettings, GlyphOutline,
     },
-    BoundingBox, Glyph, IndexedMeshText, MeshText, QualitySettings,
+    glam::Vec3A,
+    ttf_parser::{Face, GlyphId},
+    outline_builder::GlyphOutlineBuilder,
 };
-
-type Mesh = (Vec<Vec3A>, BoundingBox);
-type Mesh2D = (Vec<Vec2>, BoundingBox);
-
-type IndexedMesh = (Vec<u32>, Vec<Vec3A>, BoundingBox);
-type IndexedMesh2D = (Vec<u32>, Vec<Vec2>, BoundingBox);
 
 /// A [MeshGenerator] handles rasterizing individual glyphs.
 ///
@@ -39,12 +30,7 @@ impl MeshGenerator {
     ///
     /// * `font`: The font that will be used for rasterizing.
     pub fn new(font: &'static [u8]) -> Self {
-        let face = Face::parse(font, 0).expect("Failed to generate font from data.");
-
-        Self {
-            font: face,
-            quality: QualitySettings::default(),
-        }
+        Self::new_with_quality(font, QualitySettings::default())
     }
 
     /// Creates a new [MeshGenerator] with custom quality settings.
@@ -54,407 +40,8 @@ impl MeshGenerator {
     /// * `font`: The font that will be used for rasterizing.
     /// * `quality`: The [QualitySettings] that should be used.
     pub fn new_with_quality(font: &'static [u8], quality: QualitySettings) -> Self {
-        let face = Face::parse(font, 0).expect("Failed to generate font from data.");
-
-        Self {
-            font: face,
-            quality,
-        }
-    }
-
-    /*
-    /// Fills the internal cache of a [MeshGenerator] with the given characters.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyphs`: The glyphs that will be precached. Each character should appear exactly once.
-    /// * `flat`: Wether the flat or three-dimensional variant of the characters should be preloaded.
-    /// If both variants should be precached this function must be called twice with this parameter set
-    /// to `true` and `false`.
-    /// * `cache`: An optional value that controls which cache will be filled. `None` means both caches will be filled.
-    ///
-    /// Returns:
-    ///
-    /// A [Result] indicating if the operation was successful.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use meshtext::MeshGenerator;
-    ///
-    /// let font_data = include_bytes!("../assets/font/FiraMono-Regular.ttf");
-    /// let mut generator = MeshGenerator::new(font_data);
-    ///
-    /// let common = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_string();
-    ///
-    /// // Precache both flat and three-dimensional glyphs both for indexed and non-indexed meshes.
-    /// generator.precache_glyphs(&common, false, None);
-    /// generator.precache_glyphs(&common, true, None);
-    /// ```
-    pub fn precache_glyphs(
-        &mut self,
-        glyphs: &str,
-        flat: bool,
-        cache: Option<CacheType>,
-    ) -> Result<(), Box<dyn MeshTextError>> {
-        if let Some(cache_type) = cache {
-            match cache_type {
-                CacheType::Normal => {
-                    for c in glyphs.chars() {
-                        self.generate_glyph(c, flat, None)?;
-                    }
-                }
-                CacheType::Indexed => {
-                    for c in glyphs.chars() {
-                        self.generate_glyph_indexed(c, flat, None)?;
-                    }
-                }
-            }
-        } else {
-            // If no type is set explicitely, both variants will be precached.
-            for c in glyphs.chars() {
-                self.generate_glyph(c, flat, None)?;
-            }
-            for c in glyphs.chars() {
-                self.generate_glyph_indexed(c, flat, None)?;
-            }
-        }
-
-        Ok(())
-    }
-    */
-
-    /// Generates the [MeshText] of a single character with a custom transformation.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `flat`: Set this to `true` for 2D meshes, or to `false` in order
-    /// to generate a mesh with a depth of `1.0` units.
-    /// * `transform`: The 4x4 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired [MeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_glyph(
-        &mut self,
-        glyph: char,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        let mut mesh = self.make_mesh(glyph, flat)?;
-
-        if let Some(value) = transform {
-            let transform = Mat4::from_cols_array(value);
-
-            for v in mesh.0.iter_mut() {
-                *v = transform.transform_point3a(*v);
-            }
-            mesh.1.transform(&transform);
-        }
-
-        Ok(text_mesh_from_data(mesh))
-    }
-
-    /// Generates the two-dimensional [MeshText] of a single character with a custom transformation.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `transform`: The 3x3 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired two-dimensional [MeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_glyph_2d(
-        &mut self,
-        glyph: char,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        let mesh = self.make_mesh(glyph, true)?;
-        let mut mesh = mesh_to_flat_2d(mesh);
-
-        if let Some(value) = transform {
-            let transform = Mat3::from_cols_array(value);
-
-            for v in mesh.0.iter_mut() {
-                *v = transform.transform_point2(*v);
-            }
-            mesh.1.transform_2d(&transform);
-        }
-
-        Ok(text_mesh_from_data_2d(mesh))
-    }
-
-    /// Generates the [IndexedMeshText] of a single character with a custom transformation.
-    ///
-    /// This function generates a mesh with indices and vertices.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `flat`: Set this to `true` for 2D meshes, or to `false` in order
-    /// to generate a mesh with a depth of `1.0` units.
-    /// * `transform`: The 4x4 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired [IndexedMeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_glyph_indexed(
-        &mut self,
-        glyph: char,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        let mut mesh = self.make_indexed_mesh(glyph, flat)?;
-
-        if let Some(value) = transform {
-            let transform = Mat4::from_cols_array(value);
-
-            for v in mesh.1.iter_mut() {
-                *v = transform.transform_point3a(*v);
-            }
-            mesh.2.transform(&transform);
-        }
-
-        Ok(text_mesh_from_data_indexed(mesh))
-    }
-
-    /// Generates the two-dimensional [IndexedMeshText] of a single character
-    /// with a custom transformation.
-    ///
-    /// This function generates a mesh with indices and vertices.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `transform`: The 3x3 homogenous transformation matrix in column
-    /// major order that will be applied to this text.
-    ///
-    /// Returns:
-    ///
-    /// The desired [IndexedMeshText] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    fn generate_glyph_indexed_2d(
-        &mut self,
-        glyph: char,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        let mesh = self.make_indexed_mesh(glyph, true)?;
-        let mut mesh = mesh_to_indexed_flat_2d(mesh);
-
-        if let Some(value) = transform {
-            let transform = Mat3::from_cols_array(value);
-
-            for v in mesh.1.iter_mut() {
-                *v = transform.transform_point2(*v);
-            }
-            mesh.2.transform_2d(&transform);
-        }
-
-        Ok(text_mesh_from_data_indexed_2d(mesh))
-    }
-
-    /// Generates the [Mesh] of a single character with a custom transformation given
-    /// as a [Mat4].
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `flat`: Set this to `true` for 2D meshes, or to `false` in order
-    /// to generate a mesh with a depth of `1.0` units.
-    /// * `transform`: The 4x4 homogenous transformation matrix.
-    ///
-    /// Returns:
-    ///
-    /// The desired [Mesh] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    pub(crate) fn generate_glyph_with_glam_transform(
-        &mut self,
-        glyph: char,
-        flat: bool,
-        transform: &Mat4,
-    ) -> Result<Mesh, Box<dyn MeshTextError>> {
-        let mut mesh = self.make_mesh(glyph, flat)?;
-
-        for v in mesh.0.iter_mut() {
-            *v = transform.transform_point3a(*v);
-        }
-        mesh.1.transform(transform);
-
-        Ok(mesh)
-    }
-
-    /// Generates the [Mesh2D] of a single character with a custom transformation given
-    /// as a [Mat3].
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `transform`: The 3x3 homogenous transformation matrix.
-    ///
-    /// Returns:
-    ///
-    /// The desired [Mesh2D] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    pub(crate) fn generate_glyph_with_glam_transform_2d(
-        &mut self,
-        glyph: char,
-        transform: &Mat3,
-    ) -> Result<Mesh2D, Box<dyn MeshTextError>> {
-        let mesh = self.make_mesh(glyph, true)?;
-        let mut mesh = mesh_to_flat_2d(mesh);
-
-        for v in mesh.0.iter_mut() {
-            *v = transform.transform_point2(*v);
-        }
-        mesh.1.transform_2d(transform);
-
-        Ok(mesh)
-    }
-
-    /// Generates the [IndexedMesh] of a single character with a custom transformation given
-    /// as a [Mat4].
-    ///
-    /// This function handles indexed meshes.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `flat`: Set this to `true` for 2D meshes, or to `false` in order
-    /// to generate a mesh with a depth of `1.0` units.
-    /// * `transform`: The 4x4 homogenous transformation matrix.
-    ///
-    /// Returns:
-    ///
-    /// The desired [IndexedMesh] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    pub(crate) fn generate_glyph_with_glam_transform_indexed(
-        &mut self,
-        glyph: char,
-        flat: bool,
-        transform: &Mat4,
-    ) -> Result<IndexedMesh, Box<dyn MeshTextError>> {
-        let mut mesh = self.make_indexed_mesh(glyph, flat)?;
-
-        for v in mesh.1.iter_mut() {
-            *v = transform.transform_point3a(*v);
-        }
-        mesh.2.transform(transform);
-
-        Ok(mesh)
-    }
-
-    /// Generates the [IndexedMesh2D] of a single character with a custom transformation given
-    /// as a [Mat3].
-    ///
-    /// This function handles indexed meshes.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be converted to a mesh.
-    /// * `transform`: The 3x3 homogenous transformation matrix.
-    ///
-    /// Returns:
-    ///
-    /// The desired [IndexedMesh2D] or an [MeshTextError] if anything went wrong in the
-    /// process.
-    pub(crate) fn generate_glyph_with_glam_transform_indexed_2d(
-        &mut self,
-        glyph: char,
-        transform: &Mat3,
-    ) -> Result<IndexedMesh2D, Box<dyn MeshTextError>> {
-        let mesh = self.make_indexed_mesh(glyph, true)?;
-        let mut mesh = mesh_to_indexed_flat_2d(mesh);
-
-        for v in mesh.1.iter_mut() {
-            *v = transform.transform_point2(*v);
-        }
-        mesh.2.transform_2d(transform);
-
-        Ok(mesh)
-    }
-
-    /// Generates a new [Mesh] from the loaded font and the given `glyph`
-    /// and inserts it into the internal `cache`.
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character that should be loaded.
-    /// * `flat`: Wether the character should be laid out in a 2D mesh.
-    ///
-    /// Returns:
-    ///
-    /// A [Result] containing the [Mesh] if successful, otherwise an [MeshTextError].
-    fn make_mesh(
-        &mut self,
-        glyph: char,
-        flat: bool,
-    ) -> Result<Mesh, Box<dyn MeshTextError>> {
-        let font_height = self.font.height() as f32;
-        let mut builder = GlyphOutlineBuilder::new(font_height, self.quality);
-
-        let glyph_index = self.glyph_id_of_char(glyph);
-
-        let mut depth = (0.5f32, -0.5f32);
-        let (rect, mesh) = match self.font.outline_glyph(glyph_index, &mut builder) {
-            Some(bbox) => {
-                let mesh = raster_to_mesh(&builder.get_glyph_outline(), flat)?;
-                (bbox, mesh)
-            }
-            None => {
-                // The glyph has no outline so it is most likely a space or any other
-                // charcter that can not be displayed.
-                // An empty mesh is cached for simplicity nevertheless.
-                depth = (0f32, 0f32);
-                (
-                    ttf_parser::Rect {
-                        x_min: 0,
-                        y_min: 0,
-                        x_max: 0,
-                        y_max: 0,
-                    },
-                    Vec::new(),
-                )
-            }
-        };
-
-        // Add mesh to cache.
-        let bbox = if flat {
-            BoundingBox {
-                max: Vec3A::new(
-                    rect.x_max as f32 / font_height,
-                    rect.y_max as f32 / font_height,
-                    0f32,
-                ),
-                min: Vec3A::new(
-                    rect.x_min as f32 / font_height,
-                    rect.y_min as f32 / font_height,
-                    0f32,
-                ),
-            }
-        } else {
-            BoundingBox {
-                max: Vec3A::new(
-                    rect.x_max as f32 / font_height,
-                    rect.y_max as f32 / font_height,
-                    depth.0,
-                ),
-                min: Vec3A::new(
-                    rect.x_min as f32 / font_height,
-                    rect.y_min as f32 / font_height,
-                    depth.1,
-                ),
-            }
-        };
-
-        Ok((mesh, bbox))
+        let font = Face::parse(font, 0).expect("Failed to generate font from data.");
+        Self {font, quality}
     }
 
     /// Generates a new [IndexedMesh] from the loaded font and the given `glyph`
@@ -468,11 +55,11 @@ impl MeshGenerator {
     /// Returns:
     ///
     /// A [Result] containing the [IndexedMesh] if successful, otherwise an [MeshTextError].
-    fn make_indexed_mesh(
+    pub fn generate_indexed_mesh(
         &mut self,
         glyph: char,
         flat: bool,
-    ) -> Result<IndexedMesh, Box<dyn MeshTextError>> {
+    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
         let font_height = self.font.height() as f32;
         let mut builder = GlyphOutlineBuilder::new(font_height, self.quality);
 
@@ -481,7 +68,7 @@ impl MeshGenerator {
         let mut depth = (0.5f32, -0.5f32);
         let (rect, vertices, indices) = match self.font.outline_glyph(glyph_index, &mut builder) {
             Some(bbox) => {
-                let mesh = raster_to_mesh_indexed(&builder.get_glyph_outline(), flat)?;
+                let mesh = tesselate(&builder.get_glyph_outline(), flat)?;
                 (bbox, mesh.0, mesh.1)
             }
             None => {
@@ -502,36 +89,30 @@ impl MeshGenerator {
             }
         };
 
-        // Add mesh to cache.
-        let bbox = if flat {
-            BoundingBox {
-                max: Vec3A::new(
-                    rect.x_max as f32 / font_height,
-                    rect.y_max as f32 / font_height,
-                    0f32,
-                ),
-                min: Vec3A::new(
-                    rect.x_min as f32 / font_height,
-                    rect.y_min as f32 / font_height,
-                    0f32,
-                ),
-            }
-        } else {
-            BoundingBox {
-                max: Vec3A::new(
-                    rect.x_max as f32 / font_height,
-                    rect.y_max as f32 / font_height,
-                    depth.0,
-                ),
-                min: Vec3A::new(
-                    rect.x_min as f32 / font_height,
-                    rect.y_min as f32 / font_height,
-                    depth.1,
-                ),
-            }
+        // Compute bounding box.
+        if flat { depth = (0., 0.); }
+        let bbox = BoundingBox {
+            max: Vec3A::new(
+                rect.x_max as f32 / font_height,
+                rect.y_max as f32 / font_height,
+                depth.0,
+            ),
+            min: Vec3A::new(
+                rect.x_min as f32 / font_height,
+                rect.y_min as f32 / font_height,
+                depth.1,
+            ),
         };
 
-        Ok((indices, vertices, bbox))
+        let mesh_text = IndexedMeshText {
+            bbox,
+            indices,
+            vertices: vertices.into_iter()
+                .map(Into::<[f32; 3]>::into)
+                .flatten()
+                .collect(),
+        };
+        Ok(mesh_text)
     }
 
     /// Finds the [GlyphId] of a certain [char].
@@ -550,40 +131,117 @@ impl MeshGenerator {
     }
 }
 
-impl Glyph<MeshText> for MeshGenerator {
-    fn generate_glyph(
-        &mut self,
-        glyph: char,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        self.generate_glyph(glyph, flat, transform)
-    }
+/// Generates an indexed triangle mesh from a discrete [GlyphOutline].
+///
+/// Arguments:
+///
+/// * `outline`: The outline of the desired glyph.
+/// * `flat`: Generates a two dimensional mesh if `true`, otherwise
+/// a three dimensional mesh with depth `1.0` units is generated.
+///
+/// Returns:
+///
+/// A [Result] containing the generated mesh data or an [MeshTextError] if
+/// anything went wrong in the process.
+#[allow(unused)]
+fn tesselate(
+    outline: &GlyphOutline,
+    flat: bool,
+) -> Result<(Vec<Vec3A>, Vec<u32>), Box<dyn MeshTextError>> {
+    let points = &outline.points;
+    let (triangles, edges) = get_glyph_area_triangulation(outline)?;
 
-    fn generate_glyph_2d(
-        &mut self,
-        glyph: char,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<MeshText, Box<dyn MeshTextError>> {
-        self.generate_glyph_2d(glyph, transform)
+    if flat {
+        let mut vertices = Vec::new();
+        for p in points {
+            vertices.push(Vec3A::new(p.0 as f32, p.1 as f32, 0f32));
+        }
+
+        let mut indices = Vec::new();
+        for i in triangles {
+            indices.push(i.0 as u32);
+            indices.push(i.1 as u32);
+            indices.push(i.2 as u32);
+        }
+
+        Ok((vertices, indices))
+    } else {
+        let mut vertices = Vec::new();
+        for p in points {
+            vertices.push(Vec3A::new(p.0 as f32, p.1 as f32, 0.5f32));
+        }
+        let flat_count = vertices.len() as u32;
+
+        for p in points {
+            vertices.push(Vec3A::new(p.0 as f32, p.1 as f32, -0.5f32));
+        }
+
+        let mut indices = Vec::new();
+        for i in triangles {
+            indices.push(i.0 as u32);
+            indices.push(i.1 as u32);
+            indices.push(i.2 as u32);
+
+            indices.push(i.2 as u32 + flat_count);
+            indices.push(i.1 as u32 + flat_count);
+            indices.push(i.0 as u32 + flat_count);
+        }
+
+        // Add the vertices and indices in between the contours (e.g. in the z-axis).
+        let flat_count = (vertices.len() / 2) as u32;
+
+        for e in edges.iter() {
+            // First triangle.
+            indices.push(e.0 as u32);
+            indices.push(e.1 as u32);
+            indices.push(flat_count + e.1 as u32);
+
+            // Second triangle.
+            indices.push(flat_count + e.0 as u32);
+            indices.push(e.0 as u32);
+            indices.push(flat_count + e.1 as u32);
+        }
+
+        Ok((vertices, indices))
     }
 }
 
-impl Glyph<IndexedMeshText> for MeshGenerator {
-    fn generate_glyph(
-        &mut self,
-        glyph: char,
-        flat: bool,
-        transform: Option<&[f32; 16]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        self.generate_glyph_indexed(glyph, flat, transform)
+fn get_glyph_area_triangulation(
+    outline: &GlyphOutline,
+) -> Result<(Vec<(usize, usize, usize)>, Vec<(usize, usize)>), Box<dyn MeshTextError>> {
+    // TODO: Implement a custom triangulation algorithm to get rid of these conversions.
+    let points: Vec<(f64, f64)> = outline
+        .points
+        .iter()
+        .map(|p| (p.0 as f64, p.1 as f64))
+        .collect();
+    let mut contours = Vec::new();
+    for c in outline.contours.iter() {
+        let path_indices: Vec<usize> = c.iter().map(|i| *i as usize).collect();
+        contours.push(path_indices);
     }
 
-    fn generate_glyph_2d(
-        &mut self,
-        glyph: char,
-        transform: Option<&[f32; 9]>,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        self.generate_glyph_indexed_2d(glyph, transform)
+    // We might need access to the edges later, so we compute them here once.
+    let mut edges = Vec::new();
+    for c in contours.iter() {
+        let next = edges.len();
+        for (a, b) in c.iter().zip(c.iter().skip(1)) {
+            edges.push((*a, *b));
+        }
+        if let Some(start) = edges.get(next) {
+            if start.0 != edges.last().unwrap().1 {
+                return Err(Box::new(crate::error::GlyphTriangulationError(
+                    cdt::Error::OpenContour,
+                )));
+            }
+        }
     }
+
+    // Triangulate the contours.
+    let triangles = match cdt::triangulate_with_edges(&points, &edges) {
+        Ok(result) => result,
+        Err(err) => return Err(Box::new(GlyphTriangulationError(err))),
+    };
+    Ok((triangles, edges))
 }
+

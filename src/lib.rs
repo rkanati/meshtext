@@ -46,24 +46,18 @@ pub struct Mesh {
 
 /// Controls the quality of generated glyphs.
 ///
-/// Generally each setting can be tweaked to generate better
-/// looking glyphs at the cost of a certain performance impact.
+/// Generally each setting can be tweaked to generate better looking glyphs at the cost of a
+/// certain performance impact.
 #[derive(Debug, Clone, Copy)]
 pub struct QualitySettings {
-    /// The number of linear interpolation steps performed
-    /// on a _quadratic bezier curve_.
-    ///
-    /// If the specified font does not use _quadratic splines_
-    /// this setting will have no effect.
+    /// The number of linear interpolation steps performed on any _quadratic bezier curves_ present
+    /// in the font.
     ///
     /// Higher values result in higher polygon count.
     pub quad_interpolation_steps: u32,
 
-    /// The number of quadratic interpolation steps performed
-    /// on a _cubic bezier curve_.
-    ///
-    /// If the specified font does not use _cubic splines_
-    /// this setting will have no effect.
+    /// The number of quadratic interpolation steps performed on any _cubic bezier curves_ present
+    /// in the font.
     ///
     /// Higher values result in higher polygon count.
     pub cubic_interpolation_steps: u32,
@@ -83,11 +77,7 @@ use glam::Vec3A;
 pub type FaceRef<'f> = &'f ttf_parser::Face<'f>;
 pub use ttf_parser::GlyphId;
 
-/// A [MeshGenerator] handles rasterizing individual glyphs.
-///
-/// Each [MeshGenerator] will handle exactly one font. This means
-/// if you need support for multiple fonts, you will need to create
-/// multiple instances (one per font) of this generator.
+/// Generates glyph meshes for a font.
 pub struct MeshGenerator<'face> {
     /// The current [Face].
     face: FaceRef<'face>,
@@ -100,7 +90,6 @@ impl<'face> MeshGenerator<'face> {
     /// Creates a new [MeshGenerator].
     ///
     /// Arguments:
-    ///
     /// * `font`: The font that will be used for rasterizing.
     pub fn new(face: FaceRef<'face>) -> Self {
         Self{face, quality: QualitySettings::default()}
@@ -109,7 +98,6 @@ impl<'face> MeshGenerator<'face> {
     /// Creates a new [MeshGenerator] with custom quality settings.
     ///
     /// Arguments:
-    ///
     /// * `font`: The font that will be used for rasterizing.
     /// * `quality`: The [QualitySettings] that should be used.
     pub fn new_with_quality(face: FaceRef<'face>, quality: QualitySettings) -> Self {
@@ -121,16 +109,13 @@ impl<'face> MeshGenerator<'face> {
         self.face
     }
 
-    /// Generates a new [Mesh] from the loaded font and the given `glyph`
-    /// and inserts it into the internal `cache`.
+    /// Generates a new [Mesh] from the loaded font and the given `glyph`.
     ///
     /// Arguments:
-    ///
     /// * `glyph`: The glyph to be meshed.
     /// * `flat`: Wether the character should be laid out in a 2D mesh.
     ///
     /// Returns:
-    ///
     /// A [Result] containing the [Mesh] if successful, otherwise an [Error].
     pub fn generate_mesh(&self, glyph: GlyphId, flat: bool) -> Result<Mesh> {
         let font_height = self.face.height() as f32;
@@ -167,15 +152,12 @@ impl<'face> MeshGenerator<'face> {
 /// Generates an indexed triangle mesh from a discrete [Outline].
 ///
 /// Arguments:
-///
 /// * `outline`: The outline of the desired glyph.
-/// * `flat`: Generates a two dimensional mesh if `true`, otherwise
-/// a three dimensional mesh with depth `1.0` units is generated.
+/// * `flat`: Generates a two dimensional mesh if `true`, otherwise a three dimensional mesh
+/// with depth `1.0` units is generated.
 ///
 /// Returns:
-///
-/// A [Result] containing the generated mesh data or an [MeshTextError] if
-/// anything went wrong in the process.
+/// A [Result] containing the generated mesh data or an [Error] upon failure.
 fn tesselate(outline: Outline, flat: bool) -> Result<(Vec<Vec3A>, Vec<u32>)> {
     let triangles = {
         // TODO: Implement a custom triangulation algorithm to get rid of these conversions.

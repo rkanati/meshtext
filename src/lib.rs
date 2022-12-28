@@ -13,45 +13,24 @@
 //! - Allows transforming text sections
 //! - Fully customizable to easily integrate in your rendering pipeline
 
-/// Contains the various errors that may occur
-/// while using this crate.
-pub mod error {
-    use std::{error::Error, fmt};
+/// An error that can occur while triangulating the outline of a font.
+#[derive(Debug)]
+pub enum Error {
+    Triangulation(cdt::Error),
+}
 
-    /// Any error that can occur while generating a [crate::MeshText] or an [crate::IndexedMeshText].
-    pub trait MeshTextError: fmt::Debug + fmt::Display {}
+impl std::error::Error for Error { }
 
-    /// An error that can occur while parsing the outline of a font.
-    #[derive(Debug)]
-    pub struct GlyphOutlineError;
-
-    impl MeshTextError for GlyphOutlineError {}
-
-    impl Error for GlyphOutlineError {}
-
-    impl fmt::Display for GlyphOutlineError {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(
-                f,
-                "The glyph outline of this font seems to be malformed / unsupported."
-            )
-        }
-    }
-
-    /// An error that can occur while triangulating the outline of a font.
-    #[derive(Debug)]
-    pub struct GlyphTriangulationError(pub cdt::Error);
-
-    impl MeshTextError for GlyphTriangulationError {}
-
-    impl Error for GlyphTriangulationError {}
-
-    impl fmt::Display for GlyphTriangulationError {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "The glyph outline could not be triangulated.")
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Error::Triangulation(cdte)
+                => write!(f, "The glyph outline could not be triangulated: {}", cdte),
         }
     }
 }
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 mod mesh_generator;
 pub use mesh_generator::MeshGenerator;
@@ -70,24 +49,15 @@ pub(crate) struct GlyphOutline {
     pub points: Vec<Point>,
 }
 
-/// Holds the generated mesh data for the given text input.
+/// Holds the generated mesh data for the given glyph.
 ///
 /// The triangles use indexed vertices.
-pub struct IndexedMeshText {
+pub struct GlyphMesh {
     /// The bounding box of this mesh.
     pub bbox: BoundingBox,
 
     /// The indices of this mesh.
     pub indices: Vec<u32>,
-
-    /// The vertices of this mesh.
-    pub vertices: Vec<f32>,
-}
-
-/// Holds the generated mesh data for the given text input.
-pub struct MeshText {
-    /// The bounding box of this mesh.
-    pub bbox: BoundingBox,
 
     /// The vertices of this mesh.
     pub vertices: Vec<f32>,

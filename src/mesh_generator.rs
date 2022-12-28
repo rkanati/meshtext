@@ -1,12 +1,9 @@
 mod outline_builder;
 
 use {
-    crate::{
-        error::{MeshTextError, GlyphTriangulationError},
-        BoundingBox, IndexedMeshText, QualitySettings, GlyphOutline,
-    },
+    crate::*,
     glam::Vec3A,
-    ttf_parser::{Face, GlyphId},
+    ttf_parser::Face,
     outline_builder::GlyphOutlineBuilder,
 };
 
@@ -15,22 +12,22 @@ use {
 /// Each [MeshGenerator] will handle exactly one font. This means
 /// if you need support for multiple fonts, you will need to create
 /// multiple instances (one per font) of this generator.
-pub struct MeshGenerator {
+pub struct MeshGenerator<'face> {
     /// The current [Face].
-    font: Face<'static>,
+    face: &'face Face<'face>,
 
     /// Quality settings for generating the text meshes.
     quality: QualitySettings,
 }
 
-impl MeshGenerator {
+impl<'face> MeshGenerator<'face> {
     /// Creates a new [MeshGenerator].
     ///
     /// Arguments:
     ///
     /// * `font`: The font that will be used for rasterizing.
-    pub fn new(font: &'static [u8]) -> Self {
-        Self::new_with_quality(font, QualitySettings::default())
+    pub fn new(face: &'face Face<'face>) -> Self {
+        Self{face, quality: QualitySettings::default()}
     }
 
     /// Creates a new [MeshGenerator] with custom quality settings.
@@ -39,9 +36,13 @@ impl MeshGenerator {
     ///
     /// * `font`: The font that will be used for rasterizing.
     /// * `quality`: The [QualitySettings] that should be used.
-    pub fn new_with_quality(font: &'static [u8], quality: QualitySettings) -> Self {
-        let font = Face::parse(font, 0).expect("Failed to generate font from data.");
-        Self {font, quality}
+    pub fn new_with_quality(face: &'face Face<'face>, quality: QualitySettings) -> Self {
+        Self{face, quality}
+    }
+
+    /// Get the face used by this [MeshGenerator].
+    pub fn face(&self) -> &'face Face<'face> {
+        self.face
     }
 
     /// Generates a new [IndexedMesh] from the loaded font and the given `glyph`
@@ -59,14 +60,16 @@ impl MeshGenerator {
         &mut self,
         glyph: char,
         flat: bool,
-    ) -> Result<IndexedMeshText, Box<dyn MeshTextError>> {
-        let font_height = self.font.height() as f32;
+    ) -> Result<GlyphMesh> {
+        let font_height = self.face.height() as f32;
         let mut builder = GlyphOutlineBuilder::new(font_height, self.quality);
 
-        let glyph_index = self.glyph_id_of_char(glyph);
+        let glyph_index = self.face
+            .glyph_index(glyph)
+            .unwrap_or_default();
 
         let mut depth = (0.5f32, -0.5f32);
-        let (rect, vertices, indices) = match self.font.outline_glyph(glyph_index, &mut builder) {
+        let (rect, vertices, indices) = match self.face.outline_glyph(glyph_index, &mut builder) {
             Some(bbox) => {
                 let mesh = tesselate(&builder.get_glyph_outline(), flat)?;
                 (bbox, mesh.0, mesh.1)
@@ -104,7 +107,7 @@ impl MeshGenerator {
             ),
         };
 
-        let mesh_text = IndexedMeshText {
+        let mesh_text = GlyphMesh {
             bbox,
             indices,
             vertices: vertices.into_iter()
@@ -113,21 +116,6 @@ impl MeshGenerator {
                 .collect(),
         };
         Ok(mesh_text)
-    }
-
-    /// Finds the [GlyphId] of a certain [char].
-    ///
-    /// Arguments:
-    ///
-    /// * `glyph`: The character of which the id is determined.
-    ///
-    /// Returns:
-    ///
-    /// The corresponding [GlyphId].
-    fn glyph_id_of_char(&self, glyph: char) -> GlyphId {
-        self.font
-            .glyph_index(glyph)
-            .unwrap_or(ttf_parser::GlyphId(0))
     }
 }
 
@@ -147,7 +135,7 @@ impl MeshGenerator {
 fn tesselate(
     outline: &GlyphOutline,
     flat: bool,
-) -> Result<(Vec<Vec3A>, Vec<u32>), Box<dyn MeshTextError>> {
+) -> Result<(Vec<Vec3A>, Vec<u32>)> {
     let points = &outline.points;
     let (triangles, edges) = get_glyph_area_triangulation(outline)?;
 
@@ -208,7 +196,7 @@ fn tesselate(
 
 fn get_glyph_area_triangulation(
     outline: &GlyphOutline,
-) -> Result<(Vec<(usize, usize, usize)>, Vec<(usize, usize)>), Box<dyn MeshTextError>> {
+) -> Result<(Vec<(usize, usize, usize)>, Vec<(usize, usize)>)> {
     // TODO: Implement a custom triangulation algorithm to get rid of these conversions.
     let points: Vec<(f64, f64)> = outline
         .points
@@ -230,9 +218,7 @@ fn get_glyph_area_triangulation(
         }
         if let Some(start) = edges.get(next) {
             if start.0 != edges.last().unwrap().1 {
-                return Err(Box::new(crate::error::GlyphTriangulationError(
-                    cdt::Error::OpenContour,
-                )));
+                return Err(crate::Error::Triangulation(cdt::Error::OpenContour));
             }
         }
     }
@@ -240,7 +226,7 @@ fn get_glyph_area_triangulation(
     // Triangulate the contours.
     let triangles = match cdt::triangulate_with_edges(&points, &edges) {
         Ok(result) => result,
-        Err(err) => return Err(Box::new(GlyphTriangulationError(err))),
+        Err(err) => return Err(Error::Triangulation(err)),
     };
     Ok((triangles, edges))
 }

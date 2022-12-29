@@ -4,8 +4,7 @@
 //!
 //! Supports any outline font supported by ttf_parser.
 
-mod outline_builder;
-use outline_builder::{Outline, OutlineBuilder};
+#![feature(array_chunks)]
 
 /// A bounding box for a mesh. If the mesh is flat, the z-coordinates will be zero.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -35,7 +34,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// An error that can occur while triangulating the outline of a font.
 #[derive(Debug)]
 pub enum Error {
-    Triangulation(cdt::Error),
+    Tessellation(lt::TessellationError),
 }
 
 impl std::error::Error for Error { }
@@ -43,8 +42,8 @@ impl std::error::Error for Error { }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::Triangulation(cdte)
-                => write!(f, "The glyph outline could not be triangulated: {}", cdte),
+            Error::Tessellation(e)
+                => write!(f, "The glyph outline could not be tesselated: {e}"),
         }
     }
 }
@@ -104,6 +103,8 @@ pub struct MeshGenerator<'face> {
     quality: QualitySettings,
 }
 
+use lyon_tessellation::{self as lt, path as ltp, path::builder as ltpb};
+
 impl<'face> MeshGenerator<'face> {
     /// Creates a new [MeshGenerator].
     ///
@@ -136,83 +137,97 @@ impl<'face> MeshGenerator<'face> {
     /// Returns:
     /// A [Result] containing the [Mesh] if successful, otherwise an [Error].
     pub fn generate_mesh(&self, glyph: GlyphId, flat: bool) -> Result<Mesh> {
-        let font_height = self.face.height() as f32;
-        let mut builder = OutlineBuilder::new(font_height, self.quality);
+        let scale = 1. / self.face.height() as f32;
 
-        let Some(bbox) = self.face.outline_glyph(glyph, &mut builder) else {
+        let path_builder = ltpb::NoAttributes::wrap(ltp::path::BuilderImpl::new())
+            .flattened(lt::FillOptions::DEFAULT_TOLERANCE)
+            .transformed(lt::geom::Scale::new(scale));
+        let mut bridge = Bridge(path_builder);
+        let Some(bbox) = self.face.outline_glyph(glyph, &mut bridge) else {
             return Ok(Mesh::default());
         };
 
-        let (vertices, indices) = tesselate(builder.into_outline(), flat)?;
-
-        // Compute bounding box.
-        let (zmin, zmax) = if flat {(0., 0.)} else {(-0.5, 0.5)};
+        let z = if flat {0.0} else {0.5};
         let bbox = BoundingBox::new(
-            [bbox.x_min as f32 / font_height, bbox.y_min as f32 / font_height, zmin],
-            [bbox.x_max as f32 / font_height, bbox.y_max as f32 / font_height, zmax],
+            [bbox.x_min as f32 * scale, bbox.y_min as f32 * scale, -z],
+            [bbox.x_max as f32 * scale, bbox.y_max as f32 * scale,  z],
         );
 
-        let vertices = vertices.into_iter()
-            .map(Into::<[f32; 3]>::into)
-            .collect();
-        Ok(Mesh {bbox, indices, vertices})
+        let mut bufs = lt::VertexBuffers::<[f32; 3], u32>::new();
+
+        let v_base = bufs.vertices.len() as u32;
+        let i_base = bufs.vertices.len() as u32;
+
+        let path = bridge.0.build();
+        let mut tess = lt::FillTessellator::new();
+        let opts = lt::FillOptions::default()
+            .with_fill_rule(lt::FillRule::NonZero);
+
+        let mut buf_builder = lt::BuffersBuilder::new(
+            &mut bufs,
+            |v: lt::FillVertex<'_>| -> [f32; 3] {
+                let [x, y]: [f32; 2] = v.position().into();
+                [x, y, z]
+            }
+        );
+        tess.tessellate_path(&path, &opts, &mut buf_builder)
+            .map_err(|e| Error::Tessellation(e))?;
+
+        if !flat {
+            // find boundary edges
+            let mut edge_set = std::collections::HashMap::new();
+            bufs.indices[i_base as usize ..]
+                .array_chunks().copied()
+                .flat_map(|[a, b, c]| [(a, b), (b, c), (c, a)])
+                .for_each(|(a, b)| {
+                    let key = if b < a {(b, a)} else {(a, b)};
+                    use std::collections::hash_map::Entry;
+                    match edge_set.entry(key) {
+                        Entry::Occupied(e) => { e.remove(); },
+                        Entry::Vacant(e)   => { e.insert(()); },
+                    }
+                });
+
+            // add rear face
+            let v_rear_base = bufs.vertices.len();
+            bufs.vertices.extend_from_within(v_base as usize ..);
+            for v in &mut bufs.vertices[v_rear_base..] { v[2] = -z; }
+
+            let i_rear_base = bufs.indices.len();
+            bufs.indices.extend_from_within(i_base as usize ..);
+            for [a, _, c] in bufs.indices[i_rear_base..].array_chunks_mut() {
+                std::mem::swap(a, c);
+            }
+
+            // add sides
+            let r = v_rear_base as u32 - v_base;
+            bufs.indices.extend(
+                edge_set.into_keys()
+                    .flat_map(|(a, b)| [a, b, b+r, a+r, a, b+r])
+            );
+        }
+
+        let lt::VertexBuffers{indices, vertices} = bufs;
+        Ok(Mesh{bbox, indices, vertices})
     }
 }
 
-/// Generates an indexed triangle mesh from a discrete [Outline].
-///
-/// Arguments:
-/// * `outline`: The outline of the desired glyph.
-/// * `flat`: Generates a two dimensional mesh if `true`, otherwise a three dimensional mesh
-/// with depth `1.0` units is generated.
-///
-/// Returns:
-/// A [Result] containing the generated mesh data or an [Error] upon failure.
-fn tesselate(outline: Outline, flat: bool) -> Result<(Vec<[f32; 3]>, Vec<u32>)> {
-    let triangles = {
-        // TODO: Implement a custom triangulation algorithm to get rid of these conversions.
-        let points = outline.points.iter().copied()
-            .map(|(x, y)| (x as f64, y as f64))
-            .collect::<Vec<_>>();
+struct Bridge<B>(ltpb::NoAttributes<B>) where
+    B: ltpb::PathBuilder;
 
-        // Triangulate the contours.
-        cdt::triangulate_contours(&points[..], &outline.contours[..])
-            .map_err(|e| Error::Triangulation(e))?
-    };
+impl<B> ttf_parser::OutlineBuilder for Bridge<B> where
+    B: ltpb::PathBuilder,
+{
+    fn move_to(&mut self, x: f32, y: f32) { self.0.begin([x, y].into()); }
+    fn line_to(&mut self, x: f32, y: f32) { self.0.line_to([x, y].into()); }
+    fn close(&mut self) { self.0.close(); }
 
-    let z = if flat {0.0} else {0.5};
+    fn quad_to(&mut self, xc: f32, yc: f32, x: f32, y: f32) {
+        self.0.quadratic_bezier_to([xc, yc].into(), [x, y].into());
+    }
 
-    // front face
-    let mut vertices = outline.points.iter().copied()
-        .map(|(x, y)| [x, y, z])
-        .collect();
-
-    let mut indices = triangles.iter().copied()
-        .flat_map(|(a, b, c)| [a, b, c].map(|i| i as u32))
-        .collect();
-
-    if flat {return Ok((vertices, indices));}
-
-    // back face
-    let back = vertices.len();
-    vertices.extend(
-        outline.points.iter().copied()
-            .map(|(x, y)| [x, y, -z])
-    );
-
-    indices.extend(
-        triangles.iter().copied()
-            .flat_map(|(a, b, c)| [c, b, a].map(|i| (i + back) as u32))
-    );
-
-    // sides
-    indices.extend(
-        outline.contours.iter()
-            .flat_map(|c| std::iter::zip(&c[0..], &c[1..]))
-            .flat_map(|(&i, &j)| [i, j, back + j, back + i, i, back + j])
-            .map(|i| i as u32)
-    );
-
-    Ok((vertices, indices))
+    fn curve_to(&mut self, xc0: f32, yc0: f32, xc1: f32, yc1: f32, x: f32, y: f32) {
+        self.0.cubic_bezier_to([xc0, yc0].into(), [xc1, yc1].into(), [x, y].into());
+    }
 }
 

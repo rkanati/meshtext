@@ -63,30 +63,17 @@ pub struct Mesh {
     pub vertices: Vec<[f32; 3]>,
 }
 
-/// Controls the quality of generated glyphs.
-///
-/// Generally each setting can be tweaked to generate better looking glyphs at the cost of a
-/// certain performance impact.
 #[derive(Debug, Clone, Copy)]
-pub struct QualitySettings {
-    /// The number of linear interpolation steps performed on any _quadratic bezier curves_ present
-    /// in the font.
-    ///
-    /// Higher values result in higher polygon count.
-    pub quad_interpolation_steps: u32,
-
-    /// The number of quadratic interpolation steps performed on any _cubic bezier curves_ present
-    /// in the font.
-    ///
-    /// Higher values result in higher polygon count.
-    pub cubic_interpolation_steps: u32,
+pub struct Config {
+    pub tolerance: f32,
+    pub extrude: bool,
 }
 
-impl Default for QualitySettings {
+impl Default for Config {
     fn default() -> Self {
         Self {
-            quad_interpolation_steps: 5,
-            cubic_interpolation_steps: 3,
+            tolerance: lt::FillOptions::DEFAULT_TOLERANCE,
+            extrude: true,
         }
     }
 }
@@ -96,11 +83,8 @@ pub use ttf_parser::GlyphId;
 
 /// Generates glyph meshes for a font.
 pub struct MeshGenerator<'face> {
-    /// The current [Face].
     face: FaceRef<'face>,
-
-    /// Quality settings for generating the text meshes.
-    quality: QualitySettings,
+    config: Config,
 }
 
 use lyon_tessellation::{self as lt, path as ltp, path::builder as ltpb};
@@ -111,7 +95,7 @@ impl<'face> MeshGenerator<'face> {
     /// Arguments:
     /// * `font`: The font that will be used for rasterizing.
     pub fn new(face: FaceRef<'face>) -> Self {
-        Self{face, quality: QualitySettings::default()}
+        Self::new_with_config(face, Config::default())
     }
 
     /// Creates a new [MeshGenerator] with custom quality settings.
@@ -119,8 +103,8 @@ impl<'face> MeshGenerator<'face> {
     /// Arguments:
     /// * `font`: The font that will be used for rasterizing.
     /// * `quality`: The [QualitySettings] that should be used.
-    pub fn new_with_quality(face: FaceRef<'face>, quality: QualitySettings) -> Self {
-        Self{face, quality}
+    pub fn new_with_config(face: FaceRef<'face>, config: Config) -> Self {
+        Self{face, config}
     }
 
     /// Get the face used by this [MeshGenerator].
@@ -136,7 +120,7 @@ impl<'face> MeshGenerator<'face> {
     ///
     /// Returns:
     /// A [Result] containing the [Mesh] if successful, otherwise an [Error].
-    pub fn generate_mesh(&self, glyph: GlyphId, flat: bool) -> Result<Mesh> {
+    pub fn generate_mesh(&self, glyph: GlyphId) -> Result<Mesh> {
         let scale = 1. / self.face.height() as f32;
 
         let path_builder = ltpb::NoAttributes::wrap(ltp::path::BuilderImpl::new())
@@ -147,7 +131,7 @@ impl<'face> MeshGenerator<'face> {
             return Ok(Mesh::default());
         };
 
-        let z = if flat {0.0} else {0.5};
+        let z = if self.config.extrude {0.5} else {0.0};
         let bbox = BoundingBox::new(
             [bbox.x_min as f32 * scale, bbox.y_min as f32 * scale, -z],
             [bbox.x_max as f32 * scale, bbox.y_max as f32 * scale,  z],
@@ -161,7 +145,8 @@ impl<'face> MeshGenerator<'face> {
         let path = bridge.0.build();
         let mut tess = lt::FillTessellator::new();
         let opts = lt::FillOptions::default()
-            .with_fill_rule(lt::FillRule::NonZero);
+            .with_fill_rule(lt::FillRule::NonZero)
+            .with_tolerance(self.config.tolerance);
 
         let mut buf_builder = lt::BuffersBuilder::new(
             &mut bufs,
@@ -173,7 +158,7 @@ impl<'face> MeshGenerator<'face> {
         tess.tessellate_path(&path, &opts, &mut buf_builder)
             .map_err(|e| Error::Tessellation(e))?;
 
-        if !flat {
+        if self.config.extrude {
             // find boundary edges
             let mut edge_set = std::collections::HashMap::new();
             bufs.indices[i_base as usize ..]

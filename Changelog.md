@@ -1,15 +1,11 @@
 # Changelog
+All notable changes to this project will be documented in this file.
 
----
-## Version 0.1.1
-* Add precaching functionality
----
-## Version 0.2.0
-* Add functionality for generating 2D meshes
-* Add benchmarks using [criterion](https://crates.io/crates/criterion)
-* Shrink crate size by including only a subset of glyphs in the built-in font
-* Fix function signatures
----
-## Version 0.2.1
-* Add a method for cleaning the internal glyph cache
----
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+Initial release.
+
+[Unreleased]: https://github.com/rkanati/trianglyph/tree/master
+

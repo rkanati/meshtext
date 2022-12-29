@@ -1,8 +1,4 @@
-#![doc(html_favicon_url = "https://raw.githubusercontent.com/FrankenApps/meshtext/master/logo.png")]
-#![doc(html_logo_url = "https://raw.githubusercontent.com/FrankenApps/meshtext/master/logo.png")]
-//! Generate 2d/3d triangle meshes for font glyphs.
-//!
-//! Supports any outline font supported by ttf_parser.
+//! Generate triangle meshes from font glyphs.
 
 #![feature(array_chunks)]
 

@@ -1,12 +1,12 @@
 [package]
-name = "meshtext"
-version = "0.2.1"
+name = "trianglyph"
+version = "0.1.0"
 edition = "2021"
-description = "Generate vertex-vertex meshes from text."
+description = "Generate triangle meshes from font glyphs."
 readme = "README.md"
-repository = "https://github.com/rkanati/meshtext"
+repository = "https://github.com/rkanati/trianglyph"
 license = "MIT OR Apache-2.0"
-keywords = ["graphics", "gamedev", "delauny", "render", "triangulation"]
+keywords = ["graphics", "gamedev", "triangulation", "mesh", "font"]
 categories = ["graphics", "game-development", "rendering"]
 
 [dependencies]

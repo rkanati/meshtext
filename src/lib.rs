@@ -120,7 +120,7 @@ impl<'face> MeshGenerator<'face> {
         let scale = 1. / self.face.height() as f32;
 
         let path_builder = ltpb::NoAttributes::wrap(ltp::path::BuilderImpl::new())
-            .flattened(lt::FillOptions::DEFAULT_TOLERANCE)
+            .flattened(self.config.tolerance)
             .transformed(lt::geom::Scale::new(scale));
         let mut bridge = Bridge(path_builder);
         let Some(bbox) = self.face.outline_glyph(glyph, &mut bridge) else {

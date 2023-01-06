@@ -21,7 +21,7 @@ impl BoundingBox {
     /// Returns:
     /// The new [BoundingBox].
     pub fn new(mins: [f32; 3], maxs: [f32; 3]) -> Self {
-        Self{mins, maxs}
+        Self { mins, maxs }
     }
 }
 
@@ -33,13 +33,12 @@ pub enum Error {
     Tessellation(lt::TessellationError),
 }
 
-impl std::error::Error for Error { }
+impl std::error::Error for Error {}
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::Tessellation(e)
-                => write!(f, "The glyph outline could not be tesselated: {e}"),
+            Error::Tessellation(e) => write!(f, "The glyph outline could not be tesselated: {e}"),
         }
     }
 }
@@ -100,7 +99,7 @@ impl<'face> MeshGenerator<'face> {
     /// * `font`: The font that will be used for rasterizing.
     /// * `quality`: The [QualitySettings] that should be used.
     pub fn new_with_config(face: FaceRef<'face>, config: Config) -> Self {
-        Self{face, config}
+        Self { face, config }
     }
 
     /// Get the face used by this [MeshGenerator].
@@ -127,10 +126,10 @@ impl<'face> MeshGenerator<'face> {
             return Ok(Mesh::default());
         };
 
-        let z = if self.config.extrude {0.5} else {0.0};
+        let z = if self.config.extrude { 0.5 } else { 0.0 };
         let bbox = BoundingBox::new(
             [bbox.x_min as f32 * scale, bbox.y_min as f32 * scale, -z],
-            [bbox.x_max as f32 * scale, bbox.y_max as f32 * scale,  z],
+            [bbox.x_max as f32 * scale, bbox.y_max as f32 * scale, z],
         );
 
         let mut bufs = lt::VertexBuffers::<[f32; 3], u32>::new();
@@ -144,38 +143,43 @@ impl<'face> MeshGenerator<'face> {
             .with_fill_rule(lt::FillRule::NonZero)
             .with_tolerance(self.config.tolerance);
 
-        let mut buf_builder = lt::BuffersBuilder::new(
-            &mut bufs,
-            |v: lt::FillVertex<'_>| -> [f32; 3] {
+        let mut buf_builder =
+            lt::BuffersBuilder::new(&mut bufs, |v: lt::FillVertex<'_>| -> [f32; 3] {
                 let [x, y]: [f32; 2] = v.position().into();
                 [x, y, z]
-            }
-        );
+            });
         tess.tessellate_path(&path, &opts, &mut buf_builder)
             .map_err(|e| Error::Tessellation(e))?;
 
         if self.config.extrude {
             // find boundary edges
             let mut edge_set = std::collections::HashMap::new();
-            bufs.indices[i_base as usize ..]
-                .array_chunks().copied()
+            bufs.indices[i_base as usize..]
+                .array_chunks()
+                .copied()
                 .flat_map(|[a, b, c]| [(a, b), (b, c), (c, a)])
                 .for_each(|(a, b)| {
-                    let key = if b < a {(b, a)} else {(a, b)};
+                    let key = if b < a { (b, a) } else { (a, b) };
                     use std::collections::hash_map::Entry;
                     match edge_set.entry(key) {
-                        Entry::Occupied(e) => { e.remove(); },
-                        Entry::Vacant(e)   => { e.insert(()); },
+                        Entry::Occupied(e) => {
+                            e.remove();
+                        }
+                        Entry::Vacant(e) => {
+                            e.insert(());
+                        }
                     }
                 });
 
             // add rear face
             let v_rear_base = bufs.vertices.len();
-            bufs.vertices.extend_from_within(v_base as usize ..);
-            for v in &mut bufs.vertices[v_rear_base..] { v[2] = -z; }
+            bufs.vertices.extend_from_within(v_base as usize..);
+            for v in &mut bufs.vertices[v_rear_base..] {
+                v[2] = -z;
+            }
 
             let i_rear_base = bufs.indices.len();
-            bufs.indices.extend_from_within(i_base as usize ..);
+            bufs.indices.extend_from_within(i_base as usize..);
             for [a, _, c] in bufs.indices[i_rear_base..].array_chunks_mut() {
                 std::mem::swap(a, c);
             }
@@ -183,32 +187,45 @@ impl<'face> MeshGenerator<'face> {
             // add sides
             let r = v_rear_base as u32 - v_base;
             bufs.indices.extend(
-                edge_set.into_keys()
-                    .flat_map(|(a, b)| [a, b, b+r, a+r, a, b+r])
+                edge_set
+                    .into_keys()
+                    .flat_map(|(a, b)| [a, b, b + r, a + r, a, b + r]),
             );
         }
 
-        let lt::VertexBuffers{indices, vertices} = bufs;
-        Ok(Mesh{bbox, indices, vertices})
+        let lt::VertexBuffers { indices, vertices } = bufs;
+        Ok(Mesh {
+            bbox,
+            indices,
+            vertices,
+        })
     }
 }
 
-struct Bridge<B>(ltpb::NoAttributes<B>) where
+struct Bridge<B>(ltpb::NoAttributes<B>)
+where
     B: ltpb::PathBuilder;
 
-impl<B> ttf_parser::OutlineBuilder for Bridge<B> where
+impl<B> ttf_parser::OutlineBuilder for Bridge<B>
+where
     B: ltpb::PathBuilder,
 {
-    fn move_to(&mut self, x: f32, y: f32) { self.0.begin([x, y].into()); }
-    fn line_to(&mut self, x: f32, y: f32) { self.0.line_to([x, y].into()); }
-    fn close(&mut self) { self.0.close(); }
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.0.begin([x, y].into());
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.0.line_to([x, y].into());
+    }
+    fn close(&mut self) {
+        self.0.close();
+    }
 
     fn quad_to(&mut self, xc: f32, yc: f32, x: f32, y: f32) {
         self.0.quadratic_bezier_to([xc, yc].into(), [x, y].into());
     }
 
     fn curve_to(&mut self, xc0: f32, yc0: f32, xc1: f32, yc1: f32, x: f32, y: f32) {
-        self.0.cubic_bezier_to([xc0, yc0].into(), [xc1, yc1].into(), [x, y].into());
+        self.0
+            .cubic_bezier_to([xc0, yc0].into(), [xc1, yc1].into(), [x, y].into());
     }
 }
-

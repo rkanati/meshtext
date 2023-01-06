@@ -1,7 +1,5 @@
 //! Generate triangle meshes from font glyphs.
 
-#![feature(array_chunks)]
-
 /// A bounding box for a mesh. If the mesh is flat, the z-coordinates will be zero.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoundingBox {
@@ -155,8 +153,13 @@ impl<'face> MeshGenerator<'face> {
             // find boundary edges
             let mut edge_set = std::collections::HashMap::new();
             bufs.indices[i_base as usize..]
-                .array_chunks()
-                .copied()
+                // .array_chunks()
+                // .copied()
+                .chunks(3)
+                .filter_map(|v| match v {
+                    [a, b, c] => Some([*a, *b, *c]),
+                    _ => None,
+                })
                 .flat_map(|[a, b, c]| [(a, b), (b, c), (c, a)])
                 .for_each(|(a, b)| {
                     let key = if b < a { (b, a) } else { (a, b) };
@@ -180,7 +183,14 @@ impl<'face> MeshGenerator<'face> {
 
             let i_rear_base = bufs.indices.len();
             bufs.indices.extend_from_within(i_base as usize..);
-            for [a, _, c] in bufs.indices[i_rear_base..].array_chunks_mut() {
+            // for [a, _, c] in bufs.indices[i_rear_base..].array_chunks_mut() {
+            for [a, _, c] in bufs.indices[i_rear_base..]
+                .chunks_mut(3)
+                .filter_map(|v| match v {
+                    [a, b, c] => Some([a, b, c]),
+                    _ => None,
+                })
+            {
                 std::mem::swap(a, c);
             }
 
